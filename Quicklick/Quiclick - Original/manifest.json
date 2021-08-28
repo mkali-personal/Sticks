@@ -1,0 +1,23 @@
+ {
+    "name": "Quiclick",
+    "version": "1.0",
+    "description": "Moodle automatic login clicker.",
+	"permissions": ["storage", "declarativeContent"],
+	"background": {
+      "scripts": ["background.js"],
+      "persistent": false
+    },
+    "icons": {
+      "16": "images/timer_16.png",
+      "32": "images/timer_32.png",
+      "48": "images/timer_48.png",
+      "128": "images/timer_128.png"
+    },
+	"content_scripts": [
+	   {
+		 "matches": ["https://moodle2.cs.huji.ac.il/*"],
+		 "js": ["lib/jquery-3.4.1.min.js", "content-script.js"]
+	   }
+    ],
+    "manifest_version": 2
+  }

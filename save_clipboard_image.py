@@ -6,4 +6,4 @@ now = datetime.now()
 current_time = now.strftime("%y%m%d%H%M%S")
 
 im=ImageGrab.grabclipboard()
-im.save(r"C:\Users\mkali\Desktop\{}.png".format(current_time))
+im.save(r"C:\Users\OsipLab\Desktop\{}.png".format(current_time))

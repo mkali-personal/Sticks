@@ -11,9 +11,9 @@ from matplotlib import use
 # %% Constants:
 # N is the number of grids in each direction (N x N grids in total).
 # It is most efficient when N is a power of 2, but not very crucial.
-N_LOG = 9  # [dimensionless]
+N_LOG = 8  # [dimensionless]
 N = 2 ** N_LOG  # [dimensionless]
-RESOLUTION_METERS = 40  # meters
+RESOLUTION_METERS = 80  # meters
 # note: sector size is N * RESOLUTION_METERS by N * RESOLUTION_METERS.
 LON_0, LAT_0 = 35.06362311584926, 32.918285285257184  # the southest-westest point in the map [geo-coordinates]
 # Values related to the efficiency map:
@@ -105,27 +105,35 @@ def spatial_join(grids_df, values_df):
     return result_df
 
 
-def generate_flatten_value_map(result_df, N):
+def generate_flatten_value_map(result_df, N, different_layers_for_different_ids=False):
     """
     Generate a 2D numpy array where the (i, j) element is the sum of 'value' in result_df
     for rows with 'i' and 'j' equal to the respective indices.
 
     Args:
-        result_df (pd.DataFrame): DataFrame with columns ['i', 'j', 'value'].
+        result_df (pd.DataFrame): DataFrame with columns ['i', 'j', 'value', 'id'].
 
     Returns:
         np.ndarray: 2D array with summed values.
         @param N:
     """
     # Initialize a 2D array with zeros
-    array_2d = np.zeros((N, N))
+    if different_layers_for_different_ids:
+        result_df["k"] = pd.factorize(result_df["id"])[0]  # assign a number to each ID
+        heat_map = np.zeros((N, N, len(result_df["k"].unique())))
+    else:
+        heat_map = np.zeros((N, N))
 
     # Iterate over the rows of the DataFrame and sum values into the array
     for _, row in result_df.iterrows():
-        i, j, value = int(row['i']), int(row['j']), row['value']
-        array_2d[i, j] += value
+        if different_layers_for_different_ids:
+            i, j, k, value = int(row['i']), int(row['j']), int(row['k']), row['value']
+            heat_map[i, j, k] += value
+        else:
+            i, j, value = int(row['i']), int(row['j']), row['value']
+            heat_map[i, j] += value
 
-    return array_2d
+    return heat_map
 
 
 def generate_efficiency_map(radius_meters,
@@ -144,7 +152,7 @@ def generate_efficiency_map(radius_meters,
     return efficiency_map
 
 
-def generate_maps(N, RESOLUTION_METERS, LAT_0, LON_0, df_values):
+def generate_maps(N, RESOLUTION_METERS, LAT_0, LON_0, df_values, different_layers_for_different_ids=False):
     lon_step = distance(meters=RESOLUTION_METERS).destination((LAT_0, LON_0), 90)  # 90 degrees for east
     delta_lon = lon_step.longitude - LON_0
     lat_step = distance(meters=RESOLUTION_METERS).destination((LAT_0, LON_0), 0)  # 0 degrees for north
@@ -160,7 +168,7 @@ def generate_maps(N, RESOLUTION_METERS, LAT_0, LON_0, df_values):
     LON_1, LAT_1 = df_grids['lon'].max(), df_grids['lat'].max()
 
     df_joined = spatial_join(df_grids, df_values)
-    value_map = generate_flatten_value_map(df_joined, N=N)  # What we called A
+    value_map = generate_flatten_value_map(df_joined, N=N, different_layers_for_different_ids=different_layers_for_different_ids)  # What we called A
     efficiency_map = generate_efficiency_map(RADIUS_METERS, RESOLUTION_METERS, RADIUS_MAX_VALUE, VALUE_WIDTH,
                                              CONSTANT_EFFICIENCY_SHIFT)
     # The padding is important for the convolution, to avoid circular world effects.
@@ -198,7 +206,53 @@ def convolution_2d_fft(value_map, efficiency_map, lon_0, lat_0, lon_1, lat_1, de
     return convolution_for_plotting, extent_for_plotting
 
 # %% Generate the maps:
-value_map, efficiency_map, delta_lon, delta_lat, LON_1, LAT_1 = generate_maps(N, RESOLUTION_METERS, LAT_0, LON_0, DF_VALUES)
+def generate_df_spatial_join(N, RESOLUTION_METERS, LAT_0, LON_0, df_values):
+    lon_step = distance(meters=RESOLUTION_METERS).destination((LAT_0, LON_0), 90)  # 90 degrees for east
+    delta_lon = lon_step.longitude - LON_0
+    lat_step = distance(meters=RESOLUTION_METERS).destination((LAT_0, LON_0), 0)  # 0 degrees for north
+    delta_lat = lat_step.latitude - LAT_0
+
+    # Create a pandas dataframe with 2 nested indices, each one containing 10 values (1..10) (100 rows in total):
+    df_grids = pd.DataFrame(index=pd.MultiIndex.from_product([range(N), range(N)], names=['i', 'j']))
+    df_grids.reset_index(inplace=True)
+    # df.columns = ['i', 'j']
+    df_grids['lon'] = LON_0 + df_grids['i'] * delta_lon
+    df_grids['lat'] = LAT_0 + df_grids['j'] * delta_lat
+    df_joined = spatial_join(df_grids, df_values)
+    return df_joined
+
+df_joined = generate_df_spatial_join(N, RESOLUTION_METERS, LAT_0, LON_0, DF_VALUES)
+efficiency_map = generate_efficiency_map(RADIUS_METERS, RESOLUTION_METERS, RADIUS_MAX_VALUE, VALUE_WIDTH,
+                                             CONSTANT_EFFICIENCY_SHIFT)
+ids = df_joined['id'].unique().tolist()  # list of all the ids in the data.
+relative_contributions = np.zeros(len(ids))  # here the contribution of each polygon will be stored
+i, j = 100, 200  # Assume you found this coordinate to be the best coordinate
+
+h, w = efficiency_map.shape  # Shape of B (small array)
+
+# Compute valid slice ranges
+A_i_min = max(i - h // 2, 0)
+A_i_max = min(i + h // 2 + h % 2, N)
+
+A_j_min = max(j - w // 2, 0)
+A_j_max = min(j + w // 2 + w % 2, N)
+
+# Compute corresponding slice for B
+B_i_min = max(h // 2 - i, 0)
+B_i_max = h - max(i + h // 2 + h % 2 - N, 0)
+
+B_j_min = max(w // 2 - j, 0)
+B_j_max = w - max(j + w // 2 + w % 2 - N, 0)
+
+efficiency_map_cut = efficiency_map[B_i_min:B_i_max, B_j_min:B_j_max]  # B with it only, but cut to the valid region
+
+for id_index, id in enumerate(ids):
+    df_joined_filtered = df_joined[df_joined['id'] == id]  # the current polygon with it's intersected grids
+    value_map_single_polygon = generate_flatten_value_map(df_joined, N=N)  # A with this polygon only
+    value_map_single_polygon_cut = value_map_single_polygon[A_i_min:A_i_max, A_j_min:A_j_max]  # A with it only, but cut to the valid region
+    contribution_id = np.sum(efficiency_map_cut * value_map_single_polygon_cut)  # their inner product
+    relative_contributions[id_index] = contribution_id  # save the results
+
 
 # %% generate heatmap:
 convolution_for_plotting, extent_for_plotting = convolution_2d_fft(value_map, efficiency_map, LON_0, LAT_0, LON_1, LAT_1, delta_lon, delta_lat)
@@ -208,6 +262,7 @@ convolution_for_plotting, extent_for_plotting = convolution_2d_fft(value_map, ef
 
 # %% Plot value map:
 plt.imshow(np.flip(value_map.T, axis=0), interpolation='nearest')
+plt.savefig(f'value_map.png')
 plt.show()
 
 # %% Plot efficiency map:
@@ -247,8 +302,22 @@ def compare_resolutions(N_LOG):
     plt.gca().set_box_aspect(1)
     plt.title(
         f'resolution: {RESOLUTION_METERS} meters, number of grids: {N ** 2:.2e}\ncomputation time: {computation_time:.3f} seconds')
+    # save the figure:
+    plt.savefig(f'convolution_{N_LOG}.png')
     plt.show()
 
 
 for i in range(4, 12):
     compare_resolutions(i)
+
+# %%
+
+
+
+# Example usage:
+A = np.zeros((10, 10))
+B = np.array([[1, 2, 1],
+              [2, 4, 2],
+              [1, 2, 1]])
+
+add_within_bounds(A, B, i=0, j=0)  # Adding B centered at (1,1)

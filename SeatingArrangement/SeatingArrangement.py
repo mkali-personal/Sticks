@@ -119,7 +119,7 @@ class SeatingArrangement:
         if path is None:
             return
         df = DataFrame(export_classroom)
-        df.to_excel('C:/Users/mkali/Desktop/Exported Classrom.xlsx', encoding='utf-8')
+        df.to_excel(path)  # , encoding='utf-8'
         # np.savetxt(path, export_classroom, encoding='iso8859_8') # , fmt='%s'
         Popen(path, shell=True)
 

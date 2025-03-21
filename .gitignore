@@ -1,3 +1,6 @@
 /Video Editing/*.srt
 /Video Editing/*.ass
 /Video Editing/*.mp4
+/SeatingArrangement/.idea/
+.idea/
+__pycache__/

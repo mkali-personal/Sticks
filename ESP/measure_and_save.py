@@ -98,7 +98,7 @@ with open('/flag.txt', 'w') as flag_file:
 
 # Main program
 measurement_count = 0
-start_time = time.ticks_ms()
+START_TIME = time.ticks_ms()
 pause_pattern = [1, 0, 1, 0, 1, 0]  # LED blink pattern for pause mode
 
 while measurement_count < 43200:
@@ -136,7 +136,7 @@ while measurement_count < 43200:
     mq9_value = mq9_adc.read()
     mq135_value = mq135_adc.read()
 
-    timestamp = time.ticks_ms() - start_time
+    timestamp = time.ticks_ms() - START_TIME
 
     print(f"{mq9_value},{mq135_value}")
 

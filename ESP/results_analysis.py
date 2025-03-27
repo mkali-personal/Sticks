@@ -72,7 +72,7 @@ def read_from_local_bin(file_path):
     return df
 # %%
 # df = pd.read_csv('sensor_data.csv')
-df = read_from_local_bin('_data.bin')
+df = read_from_local_bin('data_last.bin')
 # Define Gaussian kernel
 std_gaussian = 20
 kernel_size = std_gaussian * 6  # Ensure the kernel captures enough of the Gaussian tail

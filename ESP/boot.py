@@ -10,7 +10,7 @@ import socket
 import ntptime  # Built-in NTP client for MicroPython
 import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
-
+print("kaki")
 
 def sync_time():
     try:
@@ -38,7 +38,7 @@ mq135_adc.atten(machine.ADC.ATTN_11DB)
 # Binary file setup
 DATA_LAST_FILE = "/data_last.bin"
 DATA_SECOND_LAST_FILE = "/data_second_to_last.bin"
-MAX_FILE_SIZE = 512 * 1024  # 512KB
+MAX_FILE_SIZE = 32 * 1024  # 32KB
 
 ENTRY_FORMAT = "<III"  # timestamp_ms, mq9_value, mq135_value (no index)
 ENTRY_SIZE = struct.calcsize(ENTRY_FORMAT)
@@ -47,6 +47,9 @@ server_running = True
 UDP_IP = "255.255.255.255"  # Broadcast address
 UDP_PORT = 4210
 DEBUG_LEVEL = 1  # 0 = Off, 1 = Normal, 2 = Verbose
+
+N_FILES = 20  # Number of files to keep
+LIST_OF_FILES_NAMES = [f"data_file_{i}.bin" for i in range(20)]  # Extend for n files
 
 # 🔹 Create the UDP socket once
 log_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -63,35 +66,45 @@ def udp_log(message, level=1):
     except Exception as e:
         print("Logging error:", e)
 
+
+# Constants
+
+
+
 # ====== 1. Binary Save Function ======
 def save_measurement(timestamp, mq9, mq135):
     try:
         udp_log("starting save_measurement function")
+
+        # Get current file size for the last file
         try:
             udp_log("Getting file size")
-            file_size = uos.stat(DATA_LAST_FILE)[6]  # Get current file size
+            file_size = uos.stat(LIST_OF_FILES_NAMES[0])[6]  # Get current file size
             time.sleep(0.1)
             udp_log(f"File size: {file_size} / {MAX_FILE_SIZE}")
 
         except OSError:
-            udp_log(f"File {DATA_LAST_FILE} doesn't exist")
+            udp_log(f"File {LIST_OF_FILES_NAMES[0]} doesn't exist")
             file_size = 0  # File doesn't exist yet
 
         if file_size >= MAX_FILE_SIZE:
             # Rotate files
             try:
                 udp_log("Rotating data files...")
-                uos.remove(DATA_SECOND_LAST_FILE)  # Remove old second-to-last file
+                uos.remove(LIST_OF_FILES_NAMES[-1])  # Remove the oldest file
             except OSError:
                 pass  # No file to remove
-            try:
-                udp_log("Renaming files...")
-                uos.rename(DATA_LAST_FILE, DATA_SECOND_LAST_FILE)  # Move last to second-to-last
-            except OSError as e:
-                print("Error rotating files:", e)
 
-        # Append new measurement to /data_last.bin
-        with open(DATA_LAST_FILE, "ab") as f:
+            # Shift all files in the list to the left
+            for i in range(N_FILES - 1, 0, -1):
+                try:
+                    udp_log(f"Renaming {LIST_OF_FILES_NAMES[i - 1]} to {LIST_OF_FILES_NAMES[i]}...")
+                    uos.rename(LIST_OF_FILES_NAMES[i - 1], LIST_OF_FILES_NAMES[i])  # Move last to the next position
+                except OSError as e:
+                    print("Error rotating files:", e)
+
+        # Append new measurement to the latest file
+        with open(LIST_OF_FILES_NAMES[0], "ab") as f:
             udp_log(f"Saving binary data: {timestamp}, {mq9}, {mq135}")
             f.write(struct.pack(ENTRY_FORMAT, timestamp, mq9, mq135))
     except Exception as e:
@@ -103,8 +116,8 @@ def read_measurements(last_n=None):
     measurements = []
 
     if last_n is None:
-        # Read all data from both files
-        for file_path in [DATA_SECOND_LAST_FILE, DATA_LAST_FILE]:
+        # Read all data from all files
+        for file_path in LIST_OF_FILES_NAMES:
             udp_log(f"Reading binary data from {file_path}")
             try:
                 with open(file_path, "rb") as f:
@@ -119,10 +132,10 @@ def read_measurements(last_n=None):
                 print(f"Error reading binary data from {file_path}: {e}")
 
     else:
-        # Read only the last `last_n` measurements from DATA_LAST_FILE
-        udp_log(f"Reading the last {last_n} measurements from {DATA_LAST_FILE}")
+        # Read only the last `last_n` measurements from the most recent file
+        udp_log(f"Reading the last {last_n} measurements from {LIST_OF_FILES_NAMES[0]}")
         try:
-            with open(DATA_LAST_FILE, "rb") as f:
+            with open(LIST_OF_FILES_NAMES[0], "rb") as f:
                 f.seek(0, 2)  # Move to the end of the file
                 file_size = f.tell()
                 total_entries = file_size // ENTRY_SIZE
@@ -138,27 +151,27 @@ def read_measurements(last_n=None):
         except OSError:
             pass  # File doesn't exist
         except Exception as e:
-            print(f"Error reading binary data from {DATA_LAST_FILE}: {e}")
+            print(f"Error reading binary data from {LIST_OF_FILES_NAMES[0]}: {e}")
 
     return measurements
-
-
-
-# ====== 3. Binary-to-CSV Download Handler ======
+# ====== 3. Binary Download Handler ======
 async def handle_download(writer):
     try:
-        # Start HTTP response
+        # Specify the binary file name
+        binary_file_name = LIST_OF_FILES_NAMES[0]  # Assuming the latest file is the one to download
+
+        # Start HTTP response for binary file download
         await writer.awrite("HTTP/1.1 200 OK\r\n")
-        await writer.awrite("Content-Type: text/csv\r\n")
-        await writer.awrite('Content-Disposition: attachment; filename="sensor_data.csv"\r\n\r\n')
+        await writer.awrite(f'Content-Type: application/octet-stream\r\n')
+        await writer.awrite(f'Content-Disposition: attachment; filename="{binary_file_name}"\r\n\r\n')
 
-        # Write CSV header
-        await writer.awrite("timestamp,human_time,mq9_value,mq135_value\r\n")
-
-        # Stream binary data and convert to CSV
-        for timestamp, mq9, mq135 in read_measurements():
-            csv_line = f"{timestamp},{format_timestamp(timestamp)},{mq9},{mq135}\r\n"
-            await writer.awrite(csv_line)
+        # Stream binary data to the response
+        with open(binary_file_name, "rb") as f:
+            while True:
+                data = f.read(1024)  # Read in chunks of 1024 bytes
+                if not data:
+                    break
+                await writer.awrite(data)
     except Exception as e:
         print("Download error:", e)
     finally:
@@ -221,7 +234,7 @@ def web_page():
     </head>
     <body>
     <h1>ESP32 Sensor Data</h1>
-    <a href="/download" class="button">Download Full Data (CSV)</a>
+    <a href="/download" class="button">Download Full Data (.bin)</a>
     <h2>All Measurements</h2>
     <table>
     <tr>

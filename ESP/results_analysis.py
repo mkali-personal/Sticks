@@ -7,7 +7,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import convolve
 from scipy.stats import norm
+import time
 
+# ====== 3. Timestamp Formatting ======
+def format_timestamp(timestamp):
+    TIMEZONE_OFFSET = 3 * 3600  # Offset in seconds (2 hours)
+    utc_time = time.localtime(timestamp + TIMEZONE_OFFSET)
+    return "{:02}/{:02}/{:02} {:02}:{:02}:{:02}".format(
+        utc_time[0], utc_time[1], utc_time[2],
+        utc_time[3], utc_time[4], utc_time[5]
+    )
 # Read from serial port:
 def from_serial_port_to_csv():
     # Open the serial port (replace with your ESP32 COM port)
@@ -53,7 +62,7 @@ def read_from_local_bin(file_path):
                 # Unpack binary data
                 timestamp, mq9, mq135 = struct.unpack(entry_format, chunk)
                 data.append({
-                    'timestamp_ms': timestamp,
+                    'timestamp_s': timestamp,
                     'mq9_value': mq9,
                     'mq135_value': mq135
                 })
@@ -66,9 +75,9 @@ def read_from_local_bin(file_path):
 
     # Add human-readable datetime if needed
     if not df.empty:
-        df['time_hms'] = pd.to_datetime(df['timestamp_ms'], unit='ms').dt.strftime('%H:%M:%S')
-        df = df[['time_hms', 'timestamp_ms', 'mq9_value', 'mq135_value']]
-
+        df['date_time'] = pd.to_datetime(df['timestamp_s'], unit='s', origin='2000-01-01')
+        df = df[['timestamp_s', 'date_time', 'mq9_value', 'mq135_value']]
+        df = df[df['timestamp_s'] > 100000]
     return df
 # %%
 # df = pd.read_csv('sensor_data.csv')
@@ -82,11 +91,12 @@ gaussian_kernel /= gaussian_kernel.sum()  # Normalize so it doesn't change total
 
 # Convolve the data with the Gaussian
 df['mq135_convolved'] = convolve(df['mq135_value'], gaussian_kernel, mode='same')
+df = df.iloc[:-kernel_size]
 #
 
 
 df.tail()
 # %%
-df.iloc[:-kernel_size].plot(x='time_hms', y=['mq9_value', 'mq135_value', 'mq135_convolved'], figsize=(10, 5), title='MQ9 and MQ135 data')
+df[(df['date_time'] >= '2025-03-29 06:40:00') & (df['date_time'] <= '2025-03-29 07:50:00')].plot(x='date_time', y=['mq9_value', 'mq135_value'], figsize=(10, 5), title='MQ9 and MQ135 data')
 plt.show()
 

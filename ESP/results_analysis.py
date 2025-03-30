@@ -75,19 +75,25 @@ def read_from_local_bin(file_path):
 
     # Add human-readable datetime if needed
     if not df.empty:
+        df['timestamp_s'] += 3*3600  # delete this when the data is fixed
         df['date_time'] = pd.to_datetime(df['timestamp_s'], unit='s', origin='2000-01-01')
         df = df[['timestamp_s', 'date_time', 'mq9_value', 'mq135_value']]
         df = df[df['timestamp_s'] > 100000]
     return df
 # %%
 # df = pd.read_csv('sensor_data.csv')
-df = read_from_local_bin('data_last.bin')
+df_0 = read_from_local_bin('data/data_file_0.bin')
+df_1 = read_from_local_bin('data/data_file_1.bin')
+
+df = pd.concat([df_0, df_1], ignore_index=True)
+
 # Define Gaussian kernel
 std_gaussian = 20
 kernel_size = std_gaussian * 6  # Ensure the kernel captures enough of the Gaussian tail
 x = np.linspace(-kernel_size // 2, kernel_size // 2, kernel_size)
 gaussian_kernel = norm.pdf(x, scale=std_gaussian)  # Gaussian of height 1
 gaussian_kernel /= gaussian_kernel.sum()  # Normalize so it doesn't change total magnitude
+
 
 # Convolve the data with the Gaussian
 df['mq135_convolved'] = convolve(df['mq135_value'], gaussian_kernel, mode='same')
@@ -97,6 +103,20 @@ df = df.iloc[:-kernel_size]
 
 df.tail()
 # %%
-df[(df['date_time'] >= '2025-03-29 06:40:00') & (df['date_time'] <= '2025-03-29 07:50:00')].plot(x='date_time', y=['mq9_value', 'mq135_value'], figsize=(10, 5), title='MQ9 and MQ135 data')
+# df[(df['date_time'] >= '2025-03-29 06:40:00') & (df['date_time'] <= '2025-03-29 07:50:00')].plot(x='date_time', y=['mq9_value', 'mq135_value'], figsize=(10, 5), title='MQ9 and MQ135 data')
+df.plot(x='date_time', y=['mq9_value', 'mq135_value'], figsize=(10, 5), title='MQ9 and MQ135 data')
 plt.show()
+# %%
+
+from datetime import datetime, timedelta
+
+# Given number of seconds since 2020-01-01 00:00:00
+seconds_since_2020 = 796632341
+
+# Define the start time
+start_time = datetime(2020, 1, 1, 0, 0, 0)
+
+# Calculate the new date-time
+converted_time = start_time + timedelta(seconds=seconds_since_2020)
+print("Converted date-time:", converted_time)
 

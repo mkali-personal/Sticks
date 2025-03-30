@@ -10,12 +10,11 @@ import socket
 import ntptime  # Built-in NTP client for MicroPython
 import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
-print("kaki")
 
 def sync_time():
     try:
         print("Syncing time with NTP...")
-        ntptime.settime()  # Synchronizes the ESP32's time with an NTP server
+        ntptime.settime(timezone=3)  # Synchronizes the ESP32's time with an NTP server
         print("Time synchronized!")
     except Exception as e:
         print("Failed to sync time:", e)
@@ -36,8 +35,6 @@ mq9_adc.atten(machine.ADC.ATTN_11DB)
 mq135_adc.atten(machine.ADC.ATTN_11DB)
 
 # Binary file setup
-DATA_LAST_FILE = "/data_last.bin"
-DATA_SECOND_LAST_FILE = "/data_second_to_last.bin"
 MAX_FILE_SIZE = 32 * 1024  # 32KB
 
 ENTRY_FORMAT = "<III"  # timestamp_ms, mq9_value, mq135_value (no index)
@@ -49,7 +46,7 @@ UDP_PORT = 4210
 DEBUG_LEVEL = 1  # 0 = Off, 1 = Normal, 2 = Verbose
 
 N_FILES = 20  # Number of files to keep
-LIST_OF_FILES_NAMES = [f"data_file_{i}.bin" for i in range(20)]  # Extend for n files
+LIST_OF_FILES_NAMES = [f"data/file_{i}.bin" for i in range(20)]  # Extend for n files
 
 # 🔹 Create the UDP socket once
 log_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -180,7 +177,7 @@ async def handle_download(writer):
 
 # ====== 3. Timestamp Formatting ======
 def format_timestamp(timestamp):
-    TIMEZONE_OFFSET = 3 * 3600  # Offset in seconds (2 hours)
+    TIMEZONE_OFFSET = 3 * 3600  # Offset in seconds (3 hours)
     utc_time = time.localtime(timestamp + TIMEZONE_OFFSET)
     return "{:02}/{:02}/{:02} {:02}:{:02}:{:02}".format(
         utc_time[0], utc_time[1], utc_time[2],
@@ -239,7 +236,7 @@ def web_page():
     <table>
     <tr>
         <th>Timestamp</th>
-        <th>Datatime</th>
+        <th>Datetime</th>
         <th>MQ9</th>
         <th>MQ135</th>
     </tr>"""
@@ -318,7 +315,7 @@ async def measurement_loop():
 
             # Save in binary format
             save_measurement(timestamp, mq9, mq135)
-            udp_log(f"Measurement: {timestamp}, {mq9}, {mq135}")
+            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {mq9}, {mq135}")
             # Blink LED
             led.value(1)
             await asyncio.sleep(0.01)
@@ -337,6 +334,7 @@ async def main():
         sync_time()
         global START_TIME
         START_TIME = time.time()
+
         udp_log(f"Starting at start_time = {START_TIME}")
         webrepl.start(password='kalesp')
         print("WebREPL started")

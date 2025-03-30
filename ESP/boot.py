@@ -10,16 +10,32 @@ import socket
 import ntptime  # Built-in NTP client for MicroPython
 import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
+import gc
 
+# gc.collect()  # Try freeing unused memory
 
 def sync_time():
     try:
         print("Syncing time with NTP...")
-        ntptime.settime(timezone=3)  # Synchronizes the ESP32's time with an NTP server
+        ntptime.settime()  # Synchronizes the ESP32's time with an NTP server
+        udp_log(f"Time synchronized: {time.localtime()}")
         print("Time synchronized!")
     except Exception as e:
         print("Failed to sync time:", e)
 
+
+def get_storage_info():
+    fs_stat = uos.statvfs('/')
+    storage =  {
+        'block_size': fs_stat[0],          # Filesystem block size
+        'total_blocks': fs_stat[2],        # Total blocks
+        'free_blocks': fs_stat[3],         # Free blocks
+        'total_bytes': fs_stat[2] * fs_stat[0],
+        'free_bytes': fs_stat[3] * fs_stat[0],
+        'used_percent': 100 - (fs_stat[3] / fs_stat[2] * 100)
+    }
+
+    return f"Free: {storage['free_bytes'] / 1024:.1f}KB / {storage['total_bytes'] / 1024:.1f}KB"
 
 # Pin setup
 LED_PIN = 2
@@ -61,6 +77,7 @@ def udp_log(message, level=1):
         return  # Ignore messages above the debug level
 
     try:
+        print(f"Message: {message}, Time: {format_timestamp(time.time())}")#, Free memory: {gc.mem_free()}, storage_status={get_storage_info()}")  # Check available RAM
         log_socket.sendto(f"ESP32: {message}\n".encode(), (UDP_IP, UDP_PORT))
     except Exception as e:
         print("Logging error:", e)
@@ -221,43 +238,66 @@ async def handle_client(reader, writer):
             server_running = False
             await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
             await writer.awrite("<html><body><h1>Server Stopped.</h1></body></html>")
-            await writer.wait_closed()
-            return
         elif '/download' in request:
-            await handle_download(writer)
-            return
+            # Extract number of files from request
+            try:
+                num_files = int(request.split('num_files=')[1].split(' ')[0])
+            except (IndexError, ValueError):
+                num_files = 1  # Default to 1 if not specified
+            await handle_download(writer, num_files)
         else:
             await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
             await writer.awrite(web_page())
-            await writer.wait_closed()
+        await writer.wait_closed()
     except Exception as e:
         print("Client error:", e)
 
+    finally:
+        await writer.wait_closed()  # Ensure socket closure
 
-async def handle_download(writer):
+
+# Download handler with multiple file merging
+async def handle_download(writer, num_files_to_download):
     try:
-        # Specify the binary file name
-        binary_file_name = LIST_OF_FILES_NAMES[0]  # Assuming the latest file is the one to download
+        # Get list of available files, sorted by newest first
+        available_files = sorted(
+            [f for f in uos.listdir("data/") if f.startswith("file_")]
+        )
+        available_files.sort(key=lambda x: int(x.split("_")[1].split(".")[0]), reverse=False)
+        udp_log(f"Available files: {available_files}")
+
+        # Select the latest N files
+        files_to_download = available_files[:num_files_to_download]
+        udp_log(f"Files to download: {files_to_download}")
+        if not files_to_download:
+            await writer.awrite("HTTP/1.1 404 Not Found\r\n\r\n")
+            return
 
         # Start HTTP response for binary file download
         await writer.awrite("HTTP/1.1 200 OK\r\n")
-        await writer.awrite(f'Content-Type: application/octet-stream\r\n')
-        await writer.awrite(f'Content-Disposition: attachment; filename="{binary_file_name}"\r\n\r\n')
+        await writer.awrite("Content-Type: application/octet-stream\r\n")
+        await writer.awrite("Content-Disposition: attachment; filename=\"data.bin\"\r\n\r\n")
 
-        # Stream binary data to the response
-        with open(binary_file_name, "rb") as f:
-            while True:
-                data = f.read(1024)  # Read in chunks of 1024 bytes
-                if not data:
-                    break
-                await writer.awrite(data)
+        # Stream binary data from the selected files
+        for file_name in files_to_download:
+            try:
+                udp_log(f"Downloading file: {file_name}")
+                with open("data/" + file_name, "rb") as f:
+                    while True:
+                        data = f.read(1024)
+                        if not data:
+                            break
+                        await writer.awrite(data)
+                udp_log(f"File {file_name} downloaded")
+            except OSError:
+                continue  # Skip missing files
     except Exception as e:
         print("Download error:", e)
     finally:
         await writer.wait_closed()
 
 
-# ====== 4. Updated Web Page ======
+# Updated web page
 def web_page():
     measurements = read_measurements(last_n=100)
     html = """<!DOCTYPE html>
@@ -281,7 +321,11 @@ def web_page():
     </head>
     <body>
     <h1>ESP32 Sensor Data</h1>
-    <a href="/download" class="button">Download Full Data (.bin)</a>
+    <form action='/download' method='get'>
+        <label for='num_files'>Number of files to download:</label>
+        <input type='number' id='num_files' name='num_files' min='1' max='10' value='1'>
+        <input type='submit' value='Download' class='button'>
+    </form>
     <h2>All Measurements</h2>
     <table>
     <tr>
@@ -300,7 +344,7 @@ def web_page():
         </tr>"""
 
     html += """</table>
-    <p><a href="/stop_server">Stop Server</a></p>
+    <p><a href='/stop_server'>Stop Server</a></p>
     </body>
     </html>"""
     return html
@@ -337,14 +381,16 @@ async def measurement_loop():
 # Main function
 async def main():
     if connect_wifi():
+        webrepl.start(password='kalesp')
+        print("WebREPL started")
+        udp_log("WebREPL started")
+
+        time.sleep(1)
         sync_time()
         global START_TIME
         START_TIME = time.time()
 
         udp_log(f"Starting at start_time = {START_TIME}")
-        webrepl.start(password='kalesp')
-        print("WebREPL started")
-        udp_log("WebREPL started")
 
         server_task = asyncio.create_task(start_web_server())
         measurement_task = asyncio.create_task(measurement_loop())

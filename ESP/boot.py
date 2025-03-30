@@ -207,94 +207,54 @@ def connect_wifi():
         return False
 
 
-# Web server
-async def start_web_server():
-    global server_running
-    print("Starting web server...")
-    udp_log("Starting web server...")
-    try:
-        server = await asyncio.start_server(handle_client, "0.0.0.0", 80)
-        print(f"Server started: http://{network.WLAN(network.STA_IF).ifconfig()[0]}")
-        udp_log(f"Server started: http://{network.WLAN(network.STA_IF).ifconfig()[0]}")
-        async with server:
-            while server_running:
-                udp_log(f"Server running - {format_timestamp(time.time())}")
-                await asyncio.sleep(1)
-    except Exception as e:
-        print("Server error:", e)
+import asyncio
+import uos
+import time
 
 
-# Client handler
 async def handle_client(reader, writer):
-    global server_running
-    try:
-        request = await reader.read(1024)
-        request = str(request)
-        udp_log(f"Request: {request}")
+    addr = writer.get_extra_info('peername')
+    print(f"Connection from {addr}")
 
-        if '/stop_server' in request:
-            print("Stopping server...")
-            udp_log("Stopping server...")
-            server_running = False
-            await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
-            await writer.awrite("<html><body><h1>Server Stopped.</h1></body></html>")
-        elif '/download' in request:
-            # Extract number of files from request
-            try:
-                num_files = int(request.split('num_files=')[1].split(' ')[0])
-            except (IndexError, ValueError):
-                num_files = 1  # Default to 1 if not specified
-            await handle_download(writer, num_files)
+    try:
+        # Receive file request
+        requested_file = (await reader.read(128)).decode().strip()
+        print(f"Requested file: {requested_file}")
+
+        if requested_file in uos.listdir("data/"):  # Validate file existence
+            writer.write(b"OK")  # Confirm file is found
+            await writer.drain()
+            await asyncio.sleep(0.1)  # Short delay for synchronization
+
+            # Send file content
+            with open("data/" + requested_file, "rb") as f:
+                while chunk := f.read(1024):
+                    writer.write(chunk)
+                    await writer.drain()
+
+            print(f"File {requested_file} sent successfully.")
         else:
-            await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
-            await writer.awrite(web_page())
-        await writer.wait_closed()
+            writer.write(b"ERROR: File not found")
+            await writer.drain()
+
     except Exception as e:
-        print("Client error:", e)
+        print(f"Error: {e}")
 
     finally:
-        await writer.wait_closed()  # Ensure socket closure
-
-
-# Download handler with multiple file merging
-async def handle_download(writer, num_files_to_download):
-    try:
-        # Get list of available files, sorted by newest first
-        available_files = sorted(
-            [f for f in uos.listdir("data/") if f.startswith("file_")]
-        )
-        available_files.sort(key=lambda x: int(x.split("_")[1].split(".")[0]), reverse=False)
-        udp_log(f"Available files: {available_files}")
-
-        # Select the latest N files
-        files_to_download = available_files[:num_files_to_download]
-        udp_log(f"Files to download: {files_to_download}")
-        if not files_to_download:
-            await writer.awrite("HTTP/1.1 404 Not Found\r\n\r\n")
-            return
-
-        # Start HTTP response for binary file download
-        await writer.awrite("HTTP/1.1 200 OK\r\n")
-        await writer.awrite("Content-Type: application/octet-stream\r\n")
-        await writer.awrite("Content-Disposition: attachment; filename=\"data.bin\"\r\n\r\n")
-
-        # Stream binary data from the selected files
-        for file_name in files_to_download:
-            try:
-                udp_log(f"Downloading file: {file_name}")
-                with open("data/" + file_name, "rb") as f:
-                    while True:
-                        data = f.read(1024)
-                        if not data:
-                            break
-                        await writer.awrite(data)
-                udp_log(f"File {file_name} downloaded")
-            except OSError:
-                continue  # Skip missing files
-    except Exception as e:
-        print("Download error:", e)
-    finally:
+        writer.close()
         await writer.wait_closed()
+        print("Connection closed")
+
+
+async def file_server():
+    HOST = "0.0.0.0"
+    PORT = 12345
+
+    server = await asyncio.start_server(handle_client, HOST, PORT)
+    print(f"File server running on {HOST}:{PORT}")
+
+    while True:
+        await asyncio.sleep(1)  # Keep the server running
 
 
 # Updated web page
@@ -392,11 +352,14 @@ async def main():
 
         udp_log(f"Starting at start_time = {START_TIME}")
 
-        server_task = asyncio.create_task(start_web_server())
+        server_task = asyncio.create_task(file_server())  # File server replaces web server
         measurement_task = asyncio.create_task(measurement_loop())
 
         while server_running:
             await asyncio.sleep(1)
+
+asyncio.run(main())
+
 
 
 asyncio.run(main())

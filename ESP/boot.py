@@ -11,6 +11,7 @@ import ntptime  # Built-in NTP client for MicroPython
 import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
 
+
 def sync_time():
     try:
         print("Syncing time with NTP...")
@@ -18,6 +19,7 @@ def sync_time():
         print("Time synchronized!")
     except Exception as e:
         print("Failed to sync time:", e)
+
 
 # Pin setup
 LED_PIN = 2
@@ -65,7 +67,6 @@ def udp_log(message, level=1):
 
 
 # Constants
-
 
 
 # ====== 1. Binary Save Function ======
@@ -151,28 +152,9 @@ def read_measurements(last_n=None):
             print(f"Error reading binary data from {LIST_OF_FILES_NAMES[0]}: {e}")
 
     return measurements
+
+
 # ====== 3. Binary Download Handler ======
-async def handle_download(writer):
-    try:
-        # Specify the binary file name
-        binary_file_name = LIST_OF_FILES_NAMES[0]  # Assuming the latest file is the one to download
-
-        # Start HTTP response for binary file download
-        await writer.awrite("HTTP/1.1 200 OK\r\n")
-        await writer.awrite(f'Content-Type: application/octet-stream\r\n')
-        await writer.awrite(f'Content-Disposition: attachment; filename="{binary_file_name}"\r\n\r\n')
-
-        # Stream binary data to the response
-        with open(binary_file_name, "rb") as f:
-            while True:
-                data = f.read(1024)  # Read in chunks of 1024 bytes
-                if not data:
-                    break
-                await writer.awrite(data)
-    except Exception as e:
-        print("Download error:", e)
-    finally:
-        await writer.wait_closed()
 
 
 # ====== 3. Timestamp Formatting ======
@@ -183,6 +165,7 @@ def format_timestamp(timestamp):
         utc_time[0], utc_time[1], utc_time[2],
         utc_time[3], utc_time[4], utc_time[5]
     )
+
 
 # Connect to Wi-Fi
 def connect_wifi():
@@ -205,6 +188,73 @@ def connect_wifi():
     else:
         print('Could not connect to WiFi')
         return False
+
+
+# Web server
+async def start_web_server():
+    global server_running
+    print("Starting web server...")
+    udp_log("Starting web server...")
+    try:
+        server = await asyncio.start_server(handle_client, "0.0.0.0", 80)
+        print(f"Server started: http://{network.WLAN(network.STA_IF).ifconfig()[0]}")
+        udp_log(f"Server started: http://{network.WLAN(network.STA_IF).ifconfig()[0]}")
+        async with server:
+            while server_running:
+                udp_log(f"Server running - {format_timestamp(time.time())}")
+                await asyncio.sleep(1)
+    except Exception as e:
+        print("Server error:", e)
+
+
+# Client handler
+async def handle_client(reader, writer):
+    global server_running
+    try:
+        request = await reader.read(1024)
+        request = str(request)
+        udp_log(f"Request: {request}")
+
+        if '/stop_server' in request:
+            print("Stopping server...")
+            udp_log("Stopping server...")
+            server_running = False
+            await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
+            await writer.awrite("<html><body><h1>Server Stopped.</h1></body></html>")
+            await writer.wait_closed()
+            return
+        elif '/download' in request:
+            await handle_download(writer)
+            return
+        else:
+            await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
+            await writer.awrite(web_page())
+            await writer.wait_closed()
+    except Exception as e:
+        print("Client error:", e)
+
+
+async def handle_download(writer):
+    try:
+        # Specify the binary file name
+        binary_file_name = LIST_OF_FILES_NAMES[0]  # Assuming the latest file is the one to download
+
+        # Start HTTP response for binary file download
+        await writer.awrite("HTTP/1.1 200 OK\r\n")
+        await writer.awrite(f'Content-Type: application/octet-stream\r\n')
+        await writer.awrite(f'Content-Disposition: attachment; filename="{binary_file_name}"\r\n\r\n')
+
+        # Stream binary data to the response
+        with open(binary_file_name, "rb") as f:
+            while True:
+                data = f.read(1024)  # Read in chunks of 1024 bytes
+                if not data:
+                    break
+                await writer.awrite(data)
+    except Exception as e:
+        print("Download error:", e)
+    finally:
+        await writer.wait_closed()
 
 
 # ====== 4. Updated Web Page ======
@@ -254,50 +304,6 @@ def web_page():
     </body>
     </html>"""
     return html
-
-
-# Client handler
-async def handle_client(reader, writer):
-    global server_running
-    try:
-        request = await reader.read(1024)
-        request = str(request)
-        udp_log(f"Request: {request}")
-
-        if '/stop_server' in request:
-            print("Stopping server...")
-            udp_log("Stopping server...")
-            server_running = False
-            await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
-            await writer.awrite("<html><body><h1>Server Stopped.</h1></body></html>")
-            await writer.wait_closed()
-            return
-        elif '/download' in request:
-            await handle_download(writer)
-            return
-        else:
-            await writer.awrite("HTTP/1.1 200 OK\nContent-Type: text/html\n\n")
-            await writer.awrite(web_page())
-            await writer.wait_closed()
-    except Exception as e:
-        print("Client error:", e)
-
-
-# Web server
-async def start_web_server():
-    global server_running
-    print("Starting web server...")
-    udp_log("Starting web server...")
-    try:
-        server = await asyncio.start_server(handle_client, "0.0.0.0", 80)
-        print(f"Server started: http://{network.WLAN(network.STA_IF).ifconfig()[0]}")
-        udp_log(f"Server started: http://{network.WLAN(network.STA_IF).ifconfig()[0]}")
-        async with server:
-            while server_running:
-                udp_log(f"Server running - {format_timestamp(time.time())}")
-                await asyncio.sleep(1)
-    except Exception as e:
-        print("Server error:", e)
 
 
 # Measurement loop

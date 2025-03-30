@@ -82,10 +82,10 @@ def read_from_local_bin(file_path):
     return df
 # %%
 # df = pd.read_csv('sensor_data.csv')
-df_0 = read_from_local_bin('data/data_file_0.bin')
+# df_0 = read_from_local_bin('data/data_file_0.bin')
 df_1 = read_from_local_bin('data/data_file_1.bin')
 
-df = pd.concat([df_0, df_1], ignore_index=True)
+df = pd.concat([df_1], ignore_index=True)
 
 # Define Gaussian kernel
 std_gaussian = 20

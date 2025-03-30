@@ -80,10 +80,11 @@ def read_from_local_bin(file_path):
         df = df[['timestamp_s', 'date_time', 'mq9_value', 'mq135_value']]
         df = df[df['timestamp_s'] > 100000]
     return df
+
 # %%
 # df = pd.read_csv('sensor_data.csv')
 # df_0 = read_from_local_bin('data/data_file_0.bin')
-df_1 = read_from_local_bin('data/data (3).bin')
+df_1 = read_from_local_bin('merged_output.bin')
 
 df = pd.concat([df_1], ignore_index=True)
 

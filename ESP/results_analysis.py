@@ -8,6 +8,8 @@ import numpy as np
 from scipy.signal import convolve
 from scipy.stats import norm
 import time
+from request_data_over_ip import request_and_merge_files
+
 
 # ====== 3. Timestamp Formatting ======
 def format_timestamp(timestamp):
@@ -80,11 +82,16 @@ def read_from_local_bin(file_path):
         df = df[['timestamp_s', 'date_time', 'mq9_value', 'mq135_value']]
         df = df[df['timestamp_s'] > 100000]
     return df
+# %%
+# Example usage
+n_files = 1
+file_list = [f"file_{i}.bin" for i in range(n_files)]
+request_and_merge_files(file_list, "data/merged_output.bin")
 
 # %%
 # df = pd.read_csv('sensor_data.csv')
 # df_0 = read_from_local_bin('data/data_file_0.bin')
-df_1 = read_from_local_bin('merged_output.bin')
+df_1 = read_from_local_bin('data/merged_output.bin')
 
 df = pd.concat([df_1], ignore_index=True)
 

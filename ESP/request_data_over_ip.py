@@ -38,10 +38,10 @@ def request_and_merge_files(file_names, output_file):
     except Exception as e:
         print(f"General error: {e}")
 
-
-# Example usage
-file_list = [f"file_{i}.bin" for i in range(5)]
-request_and_merge_files(file_list, "merged_output.bin")
+if __name__ == "__main__":
+    # Example file names to request
+    file_list = [f"file_{i}.bin" for i in range(5)]  # Adjust the range as needed
+    request_and_merge_files(file_list, "data/merged_output.bin")
 
 
 

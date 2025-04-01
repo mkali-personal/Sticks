@@ -11,46 +11,22 @@ import ntptime  # Built-in NTP client for MicroPython
 import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
 import gc
-
-# gc.collect()  # Try freeing unused memory
-
-def sync_time():
-    try:
-        print("Syncing time with NTP...")
-        ntptime.settime()  # Synchronizes the ESP32's time with an NTP server
-        udp_log(f"Time synchronized: {time.localtime()}")
-        print("Time synchronized!")
-    except Exception as e:
-        print("Failed to sync time:", e)
-
-
-def get_storage_info():
-    fs_stat = uos.statvfs('/')
-    storage =  {
-        'block_size': fs_stat[0],          # Filesystem block size
-        'total_blocks': fs_stat[2],        # Total blocks
-        'free_blocks': fs_stat[3],         # Free blocks
-        'total_bytes': fs_stat[2] * fs_stat[0],
-        'free_bytes': fs_stat[3] * fs_stat[0],
-        'used_percent': 100 - (fs_stat[3] / fs_stat[2] * 100)
-    }
-
-    return f"Free: {storage['free_bytes'] / 1024:.1f}KB / {storage['total_bytes'] / 1024:.1f}KB"
+import asyncio
 
 # Pin setup
 LED_PIN = 2
 MQ9_PIN = 34
 MQ135_PIN = 35
 START_TIME = 0
-MEASUREMENT_TIME_INTERVAL = 3  # seconds
+MEASUREMENT_TIME_INTERVAL = 2/3  # seconds
 
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
 mq9_adc = machine.ADC(machine.Pin(MQ9_PIN))
 mq135_adc = machine.ADC(machine.Pin(MQ135_PIN))
 
 # Set ADC attenuation
-mq9_adc.atten(machine.ADC.ATTN_11DB)
-mq135_adc.atten(machine.ADC.ATTN_11DB)
+mq9_adc.atten(machine.ADC.ATTN_0DB)
+mq135_adc.atten(machine.ADC.ATTN_0DB)
 
 # Binary file setup
 MAX_FILE_SIZE = 32 * 1024  # 32KB
@@ -71,41 +47,56 @@ log_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 log_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # Enable broadcast
 
 
-def udp_log(message, level=1):
-    """Send logs over UDP using a pre-initialized socket."""
-    if level > DEBUG_LEVEL:
-        return  # Ignore messages above the debug level
+def format_timestamp(timestamp):
+    TIMEZONE_OFFSET = 3 * 3600  # Offset in seconds (3 hours)
+    utc_time = time.localtime(timestamp + TIMEZONE_OFFSET)
+    return "{:02}/{:02}/{:02} {:02}:{:02}:{:02}".format(
+        utc_time[0], utc_time[1], utc_time[2],
+        utc_time[3], utc_time[4], utc_time[5]
+    )
 
+
+def sync_time():
     try:
-        print(f"Message: {message}, Time: {format_timestamp(time.time())}")#, Free memory: {gc.mem_free()}, storage_status={get_storage_info()}")  # Check available RAM
-        log_socket.sendto(f"ESP32: {message}\n".encode(), (UDP_IP, UDP_PORT))
+        print("Syncing time with NTP...")
+        ntptime.settime()  # Synchronizes the ESP32's time with an NTP server
+        udp_log(f"Time synchronized: {time.localtime()}", DEBUG_LEVEL)
+        print("Time synchronized!")
     except Exception as e:
-        print("Logging error:", e)
+        print("Failed to sync time:", e)
 
 
-# Constants
+def udp_log(message, level):
+    """Send logs over UDP using a pre-initialized socket."""
+    if level > 0:
+        try:
+            log_socket.sendto(f"ESP32: {message}\n".encode(), (UDP_IP, UDP_PORT))
+        except Exception as e:
+            print("Logging error:", e)
+    if level > 1:
+        print(f"Time: {format_timestamp(time.time())}  Message: {message}")
 
 
 # ====== 1. Binary Save Function ======
 def save_measurement(timestamp, mq9, mq135):
     try:
-        udp_log("starting save_measurement function")
+        udp_log("starting save_measurement function", DEBUG_LEVEL)
 
         # Get current file size for the last file
         try:
-            udp_log("Getting file size")
+            udp_log("Getting file size", DEBUG_LEVEL)
             file_size = uos.stat(LIST_OF_FILES_NAMES[0])[6]  # Get current file size
             time.sleep(0.1)
-            udp_log(f"File size: {file_size} / {MAX_FILE_SIZE}")
+            udp_log(f"File size: {file_size} / {MAX_FILE_SIZE}", DEBUG_LEVEL)
 
         except OSError:
-            udp_log(f"File {LIST_OF_FILES_NAMES[0]} doesn't exist")
+            udp_log(f"File {LIST_OF_FILES_NAMES[0]} doesn't exist", DEBUG_LEVEL)
             file_size = 0  # File doesn't exist yet
 
         if file_size >= MAX_FILE_SIZE:
             # Rotate files
             try:
-                udp_log("Rotating data files...")
+                udp_log("Rotating data files...", DEBUG_LEVEL)
                 uos.remove(LIST_OF_FILES_NAMES[-1])  # Remove the oldest file
             except OSError:
                 pass  # No file to remove
@@ -113,27 +104,26 @@ def save_measurement(timestamp, mq9, mq135):
             # Shift all files in the list to the left
             for i in range(N_FILES - 1, 0, -1):
                 try:
-                    udp_log(f"Renaming {LIST_OF_FILES_NAMES[i - 1]} to {LIST_OF_FILES_NAMES[i]}...")
+                    udp_log(f"Renaming {LIST_OF_FILES_NAMES[i - 1]} to {LIST_OF_FILES_NAMES[i]}...", DEBUG_LEVEL)
                     uos.rename(LIST_OF_FILES_NAMES[i - 1], LIST_OF_FILES_NAMES[i])  # Move last to the next position
                 except OSError as e:
                     print("Error rotating files:", e)
 
         # Append new measurement to the latest file
         with open(LIST_OF_FILES_NAMES[0], "ab") as f:
-            udp_log(f"Saving binary data: {timestamp}, {mq9}, {mq135}")
+            udp_log(f"Saving binary data: {timestamp}, {mq9}, {mq135}", DEBUG_LEVEL)
             f.write(struct.pack(ENTRY_FORMAT, timestamp, mq9, mq135))
     except Exception as e:
         print("Error saving binary data:", e)
 
 
-# ====== 2. Binary Read Function (all rows) ======
 def read_measurements(last_n=None):
     measurements = []
 
     if last_n is None:
         # Read all data from all files
         for file_path in LIST_OF_FILES_NAMES:
-            udp_log(f"Reading binary data from {file_path}")
+            udp_log(f"Reading binary data from {file_path}", DEBUG_LEVEL)
             try:
                 with open(file_path, "rb") as f:
                     while True:
@@ -148,7 +138,7 @@ def read_measurements(last_n=None):
 
     else:
         # Read only the last `last_n` measurements from the most recent file
-        udp_log(f"Reading the last {last_n} measurements from {LIST_OF_FILES_NAMES[0]}")
+        udp_log(f"Reading the last {last_n} measurements from {LIST_OF_FILES_NAMES[0]}", DEBUG_LEVEL)
         try:
             with open(LIST_OF_FILES_NAMES[0], "rb") as f:
                 f.seek(0, 2)  # Move to the end of the file
@@ -171,20 +161,6 @@ def read_measurements(last_n=None):
     return measurements
 
 
-# ====== 3. Binary Download Handler ======
-
-
-# ====== 3. Timestamp Formatting ======
-def format_timestamp(timestamp):
-    TIMEZONE_OFFSET = 3 * 3600  # Offset in seconds (3 hours)
-    utc_time = time.localtime(timestamp + TIMEZONE_OFFSET)
-    return "{:02}/{:02}/{:02} {:02}:{:02}:{:02}".format(
-        utc_time[0], utc_time[1], utc_time[2],
-        utc_time[3], utc_time[4], utc_time[5]
-    )
-
-
-# Connect to Wi-Fi
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
@@ -205,11 +181,6 @@ def connect_wifi():
     else:
         print('Could not connect to WiFi')
         return False
-
-
-import asyncio
-import uos
-import time
 
 
 async def handle_client(reader, writer):
@@ -313,28 +284,34 @@ def web_page():
 # Measurement loop
 async def measurement_loop():
     print("Starting measurement loop...")
-    udp_log("Starting measurement loop...")
+    udp_log("Starting measurement loop...", DEBUG_LEVEL)
 
     while server_running:
         try:
             # Take measurements
             timestamp = time.time()
-            udp_log(f"Taking measurement at: {timestamp}")
+            udp_log(f"Taking measurement at: {timestamp}", DEBUG_LEVEL)
             mq9 = mq9_adc.read()
             mq135 = mq135_adc.read()
 
+            if mq9 > 4000:
+                mq9_adc.atten(machine.ADC.ATTN_11DB)
+
+            if mq135 > 4000:
+                mq135_adc.atten(machine.ADC.ATTN_11DB)
+
             # Save in binary format
             save_measurement(timestamp, mq9, mq135)
-            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {mq9}, {mq135}")
+            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {mq9}, {mq135}", DEBUG_LEVEL)
             # Blink LED
             led.value(1)
             await asyncio.sleep(0.01)
             led.value(0)
             await asyncio.sleep(MEASUREMENT_TIME_INTERVAL - 0.01)
-            udp_log("LED blinked")
+            udp_log("LED blinked", DEBUG_LEVEL)
         except Exception as e:
             print("Measurement error:", e)
-            udp_log(f"Measurement error: {e}")
+            udp_log(f"Measurement error: {e}", DEBUG_LEVEL)
             await asyncio.sleep(1)
 
 
@@ -343,14 +320,14 @@ async def main():
     if connect_wifi():
         webrepl.start(password='kalesp')
         print("WebREPL started")
-        udp_log("WebREPL started")
+        udp_log("WebREPL started", DEBUG_LEVEL)
 
         time.sleep(1)
         sync_time()
         global START_TIME
         START_TIME = time.time()
 
-        udp_log(f"Starting at start_time = {START_TIME}")
+        udp_log(f"Starting at start_time = {START_TIME}", DEBUG_LEVEL)
 
         server_task = asyncio.create_task(file_server())  # File server replaces web server
         measurement_task = asyncio.create_task(measurement_loop())
@@ -358,8 +335,7 @@ async def main():
         while server_running:
             await asyncio.sleep(1)
 
+
 asyncio.run(main())
-
-
 
 asyncio.run(main())

@@ -228,59 +228,6 @@ async def file_server():
         await asyncio.sleep(1)  # Keep the server running
 
 
-# Updated web page
-def web_page():
-    measurements = read_measurements(last_n=100)
-    html = """<!DOCTYPE html>
-    <html>
-    <head>
-        <title>ESP32 Sensor Data</title>
-        <style>
-            table { border-collapse: collapse; width: 100%; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            tr:nth-child(even) { background-color: #f2f2f2; }
-            .button { 
-                display: inline-block;
-                padding: 10px 20px;
-                background: #4CAF50;
-                color: white;
-                text-decoration: none;
-                border-radius: 5px;
-                margin: 10px 0;
-            }
-        </style>
-    </head>
-    <body>
-    <h1>ESP32 Sensor Data</h1>
-    <form action='/download' method='get'>
-        <label for='num_files'>Number of files to download:</label>
-        <input type='number' id='num_files' name='num_files' min='1' max='10' value='1'>
-        <input type='submit' value='Download' class='button'>
-    </form>
-    <h2>All Measurements</h2>
-    <table>
-    <tr>
-        <th>Timestamp</th>
-        <th>Datetime</th>
-        <th>MQ9</th>
-        <th>MQ135</th>
-    </tr>"""
-
-    for timestamp, mq9, mq135 in measurements:
-        html += f"""<tr>
-            <td>{timestamp}</td>
-            <td>{format_timestamp(timestamp)}</td>
-            <td>{mq9}</td>
-            <td>{mq135}</td>
-        </tr>"""
-
-    html += """</table>
-    <p><a href='/stop_server'>Stop Server</a></p>
-    </body>
-    </html>"""
-    return html
-
-
 # Measurement loop
 async def measurement_loop():
     print("Starting measurement loop...")
@@ -308,9 +255,8 @@ async def measurement_loop():
             await asyncio.sleep(0.01)
             led.value(0)
             await asyncio.sleep(MEASUREMENT_TIME_INTERVAL - 0.01)
-            udp_log("LED blinked", DEBUG_LEVEL)
+            # udp_log("LED blinked", DEBUG_LEVEL)
         except Exception as e:
-            print("Measurement error:", e)
             udp_log(f"Measurement error: {e}", DEBUG_LEVEL)
             await asyncio.sleep(1)
 

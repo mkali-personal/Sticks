@@ -98,15 +98,48 @@ def read_from_local_bin(file_path):
     return df
 
 
-# %%
-n_files = 1  # There are at most 20 files of 32kb each on the ESP32
+# %% download and merge files:
+n_files = 20  # There are at most 20 files of 32kb each on the ESP32
 file_list = [f"file_{i}.bin" for i in range(n_files)]
-output_file_path = request_and_merge_files(file_list, "only last one")
+output_file_path = request_and_merge_files(file_list, "merged_files")
 
-# %%
+# %% read df:
 df = read_from_local_bin(output_file_path)
-df.tail()
+
+# %% plot df:
 # %%
-df_narrowed = df[df['date_time'] >= (pd.Timestamp.now() - pd.Timedelta(hours=4))]
-df_narrowed.plot.scatter(x='date_time', y='mq135_convolved', figsize=(10, 5), title='MQ9 and MQ135 data')
+df_narrowed = df#[df['date_time'] >= (pd.Timestamp.now() - pd.Timedelta(minutes=60))]
+
+df_narrowed.plot.scatter(x='date_time', y='mq135_value', figsize=(18, 10), title='MQ9 and MQ135 data', marker='.', alpha=0.1, s=4)
+plt.ylim(0, df_narrowed['mq135_value'].max()*1.1)
 plt.show()
+# %%
+# std and mean:
+df_narrowed.plot.hist(y='mq135_value', bins=20, alpha=0.5, color='blue', edgecolor='black')
+mean = df_narrowed['mq135_value'].mean()
+std = df_narrowed['mq135_value'].std()
+plt.axvline(mean, color='red', linestyle='dashed', linewidth=1)
+plt.axvline(mean + std, color='green', linestyle='dashed', linewidth=1)
+plt.axvline(mean - std, color='green', linestyle='dashed', linewidth=1)
+plt.title(f'standard deviation: {std:.2f}, mean: {mean:.2f}')
+plt.show()
+
+# # present the fourier transform of the measurements:
+# def plot_fourier_transform(df):
+#     # Perform Fourier Transform
+#     N = len(df)
+#     T = 1.0  # Sampling interval (1 second)
+#     yf = np.fft.fft(df['mq135_value'])
+#     xf = np.fft.fftfreq(N, T)[:N // 2]
+#
+#     # Plot the Fourier Transform
+#     plt.figure(figsize=(10, 5))
+#     plt.plot(xf, 2.0 / N * np.abs(yf[:N // 2]))
+#     plt.title('Fourier Transform of MQ135 Data')
+#     plt.xlabel('Frequency (Hz)')
+#     plt.ylabel('Amplitude')
+#     plt.grid()
+#     plt.show()
+#
+# plot_fourier_transform(df_narrowed)
+#

@@ -12,13 +12,14 @@ import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
 import gc
 import asyncio
+from array import array
 
 # Pin setup
 LED_PIN = 2
 MQ9_PIN = 34
 MQ135_PIN = 35
 START_TIME = 0
-MEASUREMENT_TIME_INTERVAL = 2/3  # seconds
+MEASUREMENT_TIME_INTERVAL = 1  # seconds
 
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
 mq9_adc = machine.ADC(machine.Pin(MQ9_PIN))
@@ -37,7 +38,7 @@ server_running = True
 
 UDP_IP = "255.255.255.255"  # Broadcast address
 UDP_PORT = 4210
-DEBUG_LEVEL = 1  # 0 = Off, 1 = Normal, 2 = Verbose
+DEBUG_LEVEL = 0  # 0 = Off, 1 = all udp logs, 2 = all udp logs and print to console
 
 N_FILES = 20  # Number of files to keep
 LIST_OF_FILES_NAMES = [f"data/file_{i}.bin" for i in range(20)]  # Extend for n files
@@ -238,23 +239,34 @@ async def measurement_loop():
             # Take measurements
             timestamp = time.time()
             udp_log(f"Taking measurement at: {timestamp}", DEBUG_LEVEL)
-            mq9 = mq9_adc.read()
-            mq135 = mq135_adc.read()
+            n_measruements_to_average = 50
+            mq9_values = array('H', [0] * n_measruements_to_average)
+            mq135_values = array('H', [0] * n_measruements_to_average)
+
+            led.value(1)
+            for i in range(n_measruements_to_average):
+                # print(f"{str(time.ticks_ms()).ljust(30)}, {i}")
+                mq9_values[i] = mq9_adc.read()
+                mq135_values[i] = mq135_adc.read()
+                await asyncio.sleep(MEASUREMENT_TIME_INTERVAL / n_measruements_to_average)
+            led.value(0)
+
+            # Average the measurements
+            mq9 = sum(mq9_values) // n_measruements_to_average
+            mq135 = sum(mq135_values) // n_measruements_to_average
 
             if mq9 > 4000:
                 mq9_adc.atten(machine.ADC.ATTN_11DB)
-
+                udp_log("MQ9 ADC set to 11dB", level=max(1, DEBUG_LEVEL))  # always log this one
             if mq135 > 4000:
                 mq135_adc.atten(machine.ADC.ATTN_11DB)
+                udp_log("MQ9 ADC set to 11dB", level=max(1, DEBUG_LEVEL))  # always log this one
 
             # Save in binary format
             save_measurement(timestamp, mq9, mq135)
-            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {mq9}, {mq135}", DEBUG_LEVEL)
+            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {mq9}, {mq135}",
+                    level=max(1, DEBUG_LEVEL))  # always log this one
             # Blink LED
-            led.value(1)
-            await asyncio.sleep(0.01)
-            led.value(0)
-            await asyncio.sleep(MEASUREMENT_TIME_INTERVAL - 0.01)
             # udp_log("LED blinked", DEBUG_LEVEL)
         except Exception as e:
             udp_log(f"Measurement error: {e}", DEBUG_LEVEL)

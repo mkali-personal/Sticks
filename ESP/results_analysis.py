@@ -54,7 +54,7 @@ def read_from_local_bin(file_path):
             pd.DataFrame: DataFrame with columns [timestamp_ms, mq9_value, mq135_value]
         """
     # Binary format specification (must match ESP32 code)
-    entry_format = "<III"  # 3 unsigned integers (timestamp, mq9, mq135)
+    entry_format = "<IIIIII"  # 3 unsigned integers (timestamp, mq9, mq135)
     entry_size = struct.calcsize(entry_format)
 
     data = []
@@ -65,11 +65,15 @@ def read_from_local_bin(file_path):
                 break
             try:
                 # Unpack binary data
-                timestamp, mq9, mq135 = struct.unpack(entry_format, chunk)
+                timestamp, mq9, mq135, mq2, mq7, mq3 = struct.unpack(entry_format, chunk)
                 data.append({
-                    'timestamp_s': timestamp,
+                    'timestamp_s': timestamp, # and  # mq9, mq135, mq2, mq7, mq3
                     'mq9_value': mq9,
-                    'mq135_value': mq135
+                    'mq135_value': mq135,
+                    'mq2_value': mq2,
+                    'mq7_value': mq7,
+                    'mq3_value': mq3
+
                 })
             except struct.error as e:
                 print(f"Error unpacking data: {e}")
@@ -82,36 +86,39 @@ def read_from_local_bin(file_path):
     if not df.empty:
         df['timestamp_s'] += 3 * 3600  # delete this when the data is fixed
         df['date_time'] = pd.to_datetime(df['timestamp_s'], unit='s', origin='2000-01-01')
-        df = df[['timestamp_s', 'date_time', 'mq9_value', 'mq135_value']]
 
         # Define Gaussian kernel
-        std_gaussian = 20
+        std_gaussian = 10
         kernel_size = std_gaussian * 6  # Ensure the kernel captures enough of the Gaussian tail
         x = np.linspace(-kernel_size // 2, kernel_size // 2, kernel_size)
         gaussian_kernel = norm.pdf(x, scale=std_gaussian)  # Gaussian of height 1
         gaussian_kernel /= gaussian_kernel.sum()  # Normalize so it doesn't change total magnitude
 
-        # Convolve the data with the Gaussian
-        df['mq135_convolved'] = convolve(df['mq135_value'], gaussian_kernel, mode='same')
-        df['mq9_convolved'] = convolve(df['mq9_value'], gaussian_kernel, mode='same')
+        for col in ['mq9_value', 'mq135_value', 'mq2_value', 'mq7_value', 'mq3_value']:
+            # Convolve the data with the Gaussian
+            df[f"{col}_convolved"] = convolve(df[col], gaussian_kernel, mode='same')
         df = df.iloc[:-kernel_size]
     return df
 
 
 # %% download and merge files:
-n_files = 20  # There are at most 20 files of 32kb each on the ESP32
+n_files = 2  # There are at most 20 files of 32kb each on the ESP32
 file_list = [f"file_{i}.bin" for i in range(n_files)]
-output_file_path = request_and_merge_files(file_list, "merged_files")
+output_file_path = request_and_merge_files(file_list, "merged_files - new_format")
 
 # %% read df:
 df = read_from_local_bin(output_file_path)
 
 # %% plot df:
 # %%
-df_narrowed = df#[df['date_time'] >= (pd.Timestamp.now() - pd.Timedelta(minutes=60))]
+df_narrowed = df[df['date_time'] >= (pd.Timestamp.now() - pd.Timedelta(minutes=230))]
 
-df_narrowed.plot.scatter(x='date_time', y='mq135_value', figsize=(18, 10), title='MQ9 and MQ135 data', marker='.', alpha=0.1, s=4)
-plt.ylim(0, df_narrowed['mq135_value'].max()*1.1)
+for col, color in zip(['mq9_value', 'mq135_value', 'mq2_value', 'mq7_value', 'mq3_value'], ['blue', 'red', 'green', 'purple', 'orange']):
+    plt.plot(df_narrowed['date_time'], df_narrowed[col], marker='.', alpha=0.3, markersize=4, color=color, label=col)
+
+plt.ylim(bottom=0)
+plt.title('Sensor Data Over Time')
+plt.legend()
 plt.show()
 # %%
 # std and mean:

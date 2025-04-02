@@ -16,23 +16,32 @@ from array import array
 
 # Pin setup
 LED_PIN = 2
-MQ9_PIN = 34
-MQ135_PIN = 35
+MQ9_PIN = 33
+MQ135_PIN = 32
+MQ2_PIN = 35
+MQ7_PIN = 34
+MQ3_PIN = 39
 START_TIME = 0
 MEASUREMENT_TIME_INTERVAL = 1  # seconds
 
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
 mq9_adc = machine.ADC(machine.Pin(MQ9_PIN))
 mq135_adc = machine.ADC(machine.Pin(MQ135_PIN))
+mq2_adc = machine.ADC(machine.Pin(MQ2_PIN))
+mq7_adc = machine.ADC(machine.Pin(MQ7_PIN))
+mq3_adc = machine.ADC(machine.Pin(MQ3_PIN))
 
 # Set ADC attenuation
 mq9_adc.atten(machine.ADC.ATTN_0DB)
 mq135_adc.atten(machine.ADC.ATTN_0DB)
+mq2_adc.atten(machine.ADC.ATTN_0DB)
+mq7_adc.atten(machine.ADC.ATTN_0DB)
+mq3_adc.atten(machine.ADC.ATTN_0DB)
 
 # Binary file setup
 MAX_FILE_SIZE = 32 * 1024  # 32KB
 
-ENTRY_FORMAT = "<III"  # timestamp_ms, mq9_value, mq135_value (no index)
+ENTRY_FORMAT = "<IIIIII"  # timestamp_ms, mq9_value, mq135_value, mq2_value, mq7_value, mq3_value
 ENTRY_SIZE = struct.calcsize(ENTRY_FORMAT)
 server_running = True
 
@@ -79,7 +88,7 @@ def udp_log(message, level):
 
 
 # ====== 1. Binary Save Function ======
-def save_measurement(timestamp, mq9, mq135):
+def save_measurement(timestamp, measurements_array):
     try:
         udp_log("starting save_measurement function", DEBUG_LEVEL)
 
@@ -112,8 +121,8 @@ def save_measurement(timestamp, mq9, mq135):
 
         # Append new measurement to the latest file
         with open(LIST_OF_FILES_NAMES[0], "ab") as f:
-            udp_log(f"Saving binary data: {timestamp}, {mq9}, {mq135}", DEBUG_LEVEL)
-            f.write(struct.pack(ENTRY_FORMAT, timestamp, mq9, mq135))
+            udp_log(f"Saving binary data: {timestamp}, {measurements_array}", DEBUG_LEVEL)
+            f.write(struct.pack(ENTRY_FORMAT, timestamp, *measurements_array))
     except Exception as e:
         print("Error saving binary data:", e)
 
@@ -242,18 +251,27 @@ async def measurement_loop():
             n_measruements_to_average = 50
             mq9_values = array('H', [0] * n_measruements_to_average)
             mq135_values = array('H', [0] * n_measruements_to_average)
+            mq2_values = array('H', [0] * n_measruements_to_average)
+            mq7_values = array('H', [0] * n_measruements_to_average)
+            mq3_values = array('H', [0] * n_measruements_to_average)
 
             led.value(1)
             for i in range(n_measruements_to_average):
                 # print(f"{str(time.ticks_ms()).ljust(30)}, {i}")
                 mq9_values[i] = mq9_adc.read()
                 mq135_values[i] = mq135_adc.read()
+                mq2_values[i] = mq2_adc.read()
+                mq7_values[i] = mq7_adc.read()
+                mq3_values[i] = mq3_adc.read()
                 await asyncio.sleep(MEASUREMENT_TIME_INTERVAL / n_measruements_to_average)
             led.value(0)
 
             # Average the measurements
             mq9 = sum(mq9_values) // n_measruements_to_average
             mq135 = sum(mq135_values) // n_measruements_to_average
+            mq2 = sum(mq2_values) // n_measruements_to_average
+            mq7 = sum(mq7_values) // n_measruements_to_average
+            mq3 = sum(mq3_values) // n_measruements_to_average
 
             if mq9 > 4000:
                 mq9_adc.atten(machine.ADC.ATTN_11DB)
@@ -261,10 +279,19 @@ async def measurement_loop():
             if mq135 > 4000:
                 mq135_adc.atten(machine.ADC.ATTN_11DB)
                 udp_log("MQ9 ADC set to 11dB", level=max(1, DEBUG_LEVEL))  # always log this one
+            if mq2 > 4000:
+                mq2_adc.atten(machine.ADC.ATTN_11DB)
+                udp_log("MQ2 ADC set to 11dB", level=max(1, DEBUG_LEVEL))
+            if mq7 > 4000:
+                mq7_adc.atten(machine.ADC.ATTN_11DB)
+                udp_log("MQ7 ADC set to 11dB", level=max(1, DEBUG_LEVEL))
+            if mq3 > 4000:
+                mq3_adc.atten(machine.ADC.ATTN_11DB)
+                udp_log("MQ3 ADC set to 11dB", level=max(1, DEBUG_LEVEL))
 
             # Save in binary format
-            save_measurement(timestamp, mq9, mq135)
-            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {mq9}, {mq135}",
+            save_measurement(timestamp, [mq9, mq135, mq2, mq7, mq3])
+            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {[mq9, mq135, mq2, mq7, mq3]}",
                     level=max(1, DEBUG_LEVEL))  # always log this one
             # Blink LED
             # udp_log("LED blinked", DEBUG_LEVEL)
@@ -296,4 +323,3 @@ async def main():
 
 asyncio.run(main())
 
-asyncio.run(main())

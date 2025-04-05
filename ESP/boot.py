@@ -47,7 +47,7 @@ server_running = True
 
 UDP_IP = "255.255.255.255"  # Broadcast address
 UDP_PORT = 4210
-DEBUG_LEVEL = 0  # 0 = Off, 1 = all udp logs, 2 = all udp logs and print to console
+DEBUG_LEVEL = 1  # 0 = Off, 1 = all udp logs, 2 = all udp logs and print to console
 
 N_FILES = 20  # Number of files to keep
 LIST_OF_FILES_NAMES = [f"data/file_{i}.bin" for i in range(20)]  # Extend for n files

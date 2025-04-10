@@ -6,23 +6,24 @@ import numpy as np
 
 
 # %% download and merge files:
-n_files = 1  # There are at most 20 files of 32kb each on the ESP32
+n_files = 20  # There are at most 20 files of 32kb each on the ESP32
 file_list = [f"file_{i}.bin" for i in range(n_files)]
-output_file_path = request_and_merge_files(file_list, "merged_files_before_smoking")
+output_file_path = request_and_merge_files(file_list, "merged_files")
 
 # %% read df:
 df = read_from_local_bin(output_file_path)
+last_measurement_time = df['date_time'].max()
 
 # %% plot df:
 # %%
-start_time_dict = {'relative': pd.Timestamp.now() - pd.Timedelta(minutes=20),
-                   'absolute': pd.Timestamp.now().replace(hour=14, minute=49, second=0, microsecond=0),
-                   'far_past': pd.Timestamp.now().replace(year=2020, month=1, day=1),}
-end_time_dict = {'relative': pd.Timestamp.now() - pd.Timedelta(minutes=20),
-                 'absolute': pd.Timestamp.now().replace(hour=14, minute=53, second=0, microsecond=0),
-                 'now': pd.Timestamp.now()}
+start_time_dict = {'relative': last_measurement_time - pd.Timedelta(minutes=15),
+                   'absolute': last_measurement_time.replace(hour=8, minute=0, second=0, microsecond=0),
+                   'far_past': last_measurement_time.replace(year=2020, month=1, day=1),}
+end_time_dict = {'relative': last_measurement_time - pd.Timedelta(hours=11),
+                 'absolute': last_measurement_time.replace(hour=8, minute=40, second=0, microsecond=0),
+                 'now': last_measurement_time}
 start_time = start_time_dict['absolute']
-end_time = end_time_dict['now']
+end_time = end_time_dict['absolute']
 
 df_narrowed = df[(df['date_time'] >= start_time) & (df['date_time'] <= end_time)]
 # df_narrowed = df[df['date_time'] >= (pd.Timestamp.now() - pd.Timedelta(minutes=20))]
@@ -33,6 +34,7 @@ for col, color in zip(['mq9_value', 'mq135_value', 'mq2_value', 'mq7_value', 'mq
 plt.ylim(bottom=0)
 plt.title('Sensor Data Over Time')
 plt.legend()
+plt.savefig('manual saves/with umbrella.svg')
 plt.show()
 # %%
 # std and mean:

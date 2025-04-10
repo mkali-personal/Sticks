@@ -1,18 +1,16 @@
 import network
 import webrepl
-import time
 import machine
 import uasyncio as asyncio
-from uasyncio import StreamReader, StreamWriter
 import uos
 import struct
 import socket
 import ntptime  # Built-in NTP client for MicroPython
 import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
-import gc
 import asyncio
 from array import array
+
 
 # Pin setup
 LED_PIN = 2
@@ -23,6 +21,13 @@ MQ7_PIN = 34
 MQ3_PIN = 39
 START_TIME = 0
 MEASUREMENT_TIME_INTERVAL = 1  # seconds
+N_MEASUREMENTS_MEMORY = 50
+N_MEASUREMENTS_DELAY = 20
+CURRENT_MEASUREMENT_INDEX = 0
+N_MEASUREMENTS_TO_AVERAGE = 50
+N_SENSORS = 5
+MEASUREMENTS = [array('H', [0] * N_MEASUREMENTS_MEMORY) for _ in range(N_SENSORS)]
+N_STDS_ANOMALY = 2
 
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
 mq9_adc = machine.ADC(machine.Pin(MQ9_PIN))
@@ -32,12 +37,12 @@ mq7_adc = machine.ADC(machine.Pin(MQ7_PIN))
 mq3_adc = machine.ADC(machine.Pin(MQ3_PIN))
 
 # Set ADC attenuation
-mq9_adc.atten(machine.ADC.ATTN_0DB)
-mq135_adc.atten(machine.ADC.ATTN_0DB)
-mq2_adc.atten(machine.ADC.ATTN_0DB)
-mq7_adc.atten(machine.ADC.ATTN_0DB)
-mq3_adc.atten(machine.ADC.ATTN_0DB)
-
+mq9_adc.atten(machine.ADC.ATTN_6DB)
+mq135_adc.atten(machine.ADC.ATTN_6DB)
+mq2_adc.atten(machine.ADC.ATTN_6DB)
+mq7_adc.atten(machine.ADC.ATTN_6DB)
+mq3_adc.atten(machine.ADC.ATTN_6DB)
+print(machine.ADC.ATTN_6DB.to_bytes())
 # Binary file setup
 MAX_FILE_SIZE = 32 * 1024  # 32KB
 
@@ -69,6 +74,7 @@ def format_timestamp(timestamp):
 def sync_time():
     try:
         print("Syncing time with NTP...")
+        time.sleep(1)
         ntptime.settime()  # Synchronizes the ESP32's time with an NTP server
         udp_log(f"Time synchronized: {time.localtime()}", DEBUG_LEVEL)
         print("Time synchronized!")
@@ -170,6 +176,41 @@ def read_measurements(last_n=None):
 
     return measurements
 
+def check_for_anomaly(measurements_current):
+    global CURRENT_MEASUREMENT_INDEX, MEASUREMENTS
+
+    # Update cyclic buffer
+    index = CURRENT_MEASUREMENT_INDEX % N_MEASUREMENTS_MEMORY
+    for i in range(N_SENSORS):
+        MEASUREMENTS[i][index] = measurements_current[i]
+
+    CURRENT_MEASUREMENT_INDEX += 1
+
+    # Compute the past range indices
+    mean_start = (CURRENT_MEASUREMENT_INDEX - N_MEASUREMENTS_MEMORY) % N_MEASUREMENTS_MEMORY
+    mean_end = (CURRENT_MEASUREMENT_INDEX - N_MEASUREMENTS_DELAY) % N_MEASUREMENTS_MEMORY
+
+    def get_window(sensor_array):
+        if mean_start < mean_end:
+            return sensor_array[mean_start:mean_end]
+        else:
+            return sensor_array[mean_start:] + sensor_array[:mean_end]
+
+    # Check each sensor
+    for i in range(N_SENSORS):
+        window = get_window(MEASUREMENTS[i])
+        n = len(window)
+        if n == 0:
+            continue  # avoid division by zero
+
+        mean = sum(window) / n
+        std = (sum((x - mean) ** 2 for x in window) / n) ** 0.5
+
+        if measurements_current[i] > mean + N_STDS_ANOMALY * std:
+            return True
+
+    return False
+
 
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
@@ -248,46 +289,32 @@ async def measurement_loop():
             # Take measurements
             timestamp = time.time()
             udp_log(f"Taking measurement at: {timestamp}", DEBUG_LEVEL)
-            n_measruements_to_average = 50
-            mq9_values = array('H', [0] * n_measruements_to_average)
-            mq135_values = array('H', [0] * n_measruements_to_average)
-            mq2_values = array('H', [0] * n_measruements_to_average)
-            mq7_values = array('H', [0] * n_measruements_to_average)
-            mq3_values = array('H', [0] * n_measruements_to_average)
+            mq9_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
+            mq135_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
+            mq2_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
+            mq7_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
+            mq3_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
 
             led.value(1)
-            for i in range(n_measruements_to_average):
+            for i in range(N_MEASUREMENTS_TO_AVERAGE):
                 # print(f"{str(time.ticks_ms()).ljust(30)}, {i}")
                 mq9_values[i] = mq9_adc.read()
                 mq135_values[i] = mq135_adc.read()
                 mq2_values[i] = mq2_adc.read()
                 mq7_values[i] = mq7_adc.read()
                 mq3_values[i] = mq3_adc.read()
-                await asyncio.sleep(MEASUREMENT_TIME_INTERVAL / n_measruements_to_average)
+                await asyncio.sleep(MEASUREMENT_TIME_INTERVAL / N_MEASUREMENTS_TO_AVERAGE)
             led.value(0)
 
             # Average the measurements
-            mq9 = sum(mq9_values) // n_measruements_to_average
-            mq135 = sum(mq135_values) // n_measruements_to_average
-            mq2 = sum(mq2_values) // n_measruements_to_average
-            mq7 = sum(mq7_values) // n_measruements_to_average
-            mq3 = sum(mq3_values) // n_measruements_to_average
+            mq9 = sum(mq9_values) // N_MEASUREMENTS_TO_AVERAGE
+            mq135 = sum(mq135_values) // N_MEASUREMENTS_TO_AVERAGE
+            mq2 = sum(mq2_values) // N_MEASUREMENTS_TO_AVERAGE
+            mq7 = sum(mq7_values) // N_MEASUREMENTS_TO_AVERAGE
+            mq3 = sum(mq3_values) // N_MEASUREMENTS_TO_AVERAGE
 
-            if mq9 > 4000:
-                mq9_adc.atten(machine.ADC.ATTN_11DB)
-                udp_log("MQ9 ADC set to 11dB", level=max(1, DEBUG_LEVEL))  # always log this one
-            if mq135 > 4000:
-                mq135_adc.atten(machine.ADC.ATTN_11DB)
-                udp_log("MQ9 ADC set to 11dB", level=max(1, DEBUG_LEVEL))  # always log this one
-            if mq2 > 4000:
-                mq2_adc.atten(machine.ADC.ATTN_11DB)
-                udp_log("MQ2 ADC set to 11dB", level=max(1, DEBUG_LEVEL))
-            if mq7 > 4000:
-                mq7_adc.atten(machine.ADC.ATTN_11DB)
-                udp_log("MQ7 ADC set to 11dB", level=max(1, DEBUG_LEVEL))
-            if mq3 > 4000:
-                mq3_adc.atten(machine.ADC.ATTN_11DB)
-                udp_log("MQ3 ADC set to 11dB", level=max(1, DEBUG_LEVEL))
+            # Check for anomalies
+
 
             # Save in binary format
             save_measurement(timestamp, [mq9, mq135, mq2, mq7, mq3])

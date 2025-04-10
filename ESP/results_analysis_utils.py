@@ -96,5 +96,5 @@ def read_from_local_bin(file_path):
         for col in ['mq9_value', 'mq135_value', 'mq2_value', 'mq7_value', 'mq3_value']:
             # Convolve the data with the Gaussian
             df[f"{col}_convolved"] = convolve(df[col], gaussian_kernel, mode='same')
-        df = df.iloc[:-kernel_size]
+        # df = df.iloc[:-kernel_size]
     return df

@@ -1,3 +1,21 @@
+# MicroPython on ESP32
+to put the micropython on the ESP32, you need to download the firmware from the official website:
+https://micropython.org/download/ESP32_GENERIC/
+
+and run the following commands in the terminal:
+
+```bat
+pip install esptool
+python -m esptool erase_flash
+python -m esptool --baud 115200 write_flash 0x1000 ESP32_GENERIC-20241129-v1.24.1.bin
+```
+where `ESP32_GENERIC-20241129-v1.24.1.bin` is the name of the firmware file you downloaded. in the first stage
+
+# Communicating with the device
+
+## Through usb wire:
+pip install the packages adafruit-ampy, mpremote, and pyserial:
+
 to connect to the device (to use the pycharm's terminal/windows cmd as a python console of the ESP),
 you can use the following command:
 

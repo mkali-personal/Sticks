@@ -10,49 +10,36 @@ import time
 from wifi_credentials import HOUSE_WIFI_SSID, HOUSE_WIFI_PASSWORD
 import asyncio
 from array import array
-
+from local_config import PINS, SERVER_PORT
 
 # Pin setup
 LED_PIN = 2
-MQ9_PIN = 33
-MQ135_PIN = 32
-MQ2_PIN = 35
-MQ7_PIN = 34
-MQ3_PIN = 39
 START_TIME = 0
 MEASUREMENT_TIME_INTERVAL = 1  # seconds
 N_MEASUREMENTS_MEMORY = 50
 N_MEASUREMENTS_DELAY = 20
 CURRENT_MEASUREMENT_INDEX = 0
 N_MEASUREMENTS_TO_AVERAGE = 50
-N_SENSORS = 5
+N_SENSORS = len(PINS)
 MEASUREMENTS = [array('H', [0] * N_MEASUREMENTS_MEMORY) for _ in range(N_SENSORS)]
 N_STDS_ANOMALY = 2
 
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
-mq9_adc = machine.ADC(machine.Pin(MQ9_PIN))
-mq135_adc = machine.ADC(machine.Pin(MQ135_PIN))
-mq2_adc = machine.ADC(machine.Pin(MQ2_PIN))
-mq7_adc = machine.ADC(machine.Pin(MQ7_PIN))
-mq3_adc = machine.ADC(machine.Pin(MQ3_PIN))
+adcs = [machine.ADC(machine.Pin(pin)) for pin in PINS]
 
+for adc in adcs:
+    adc.atten(machine.ADC.ATTN_11DB)  # Set ADC attenuation to 11dB for better range
 # Set ADC attenuation
-mq9_adc.atten(machine.ADC.ATTN_6DB)
-mq135_adc.atten(machine.ADC.ATTN_6DB)
-mq2_adc.atten(machine.ADC.ATTN_6DB)
-mq7_adc.atten(machine.ADC.ATTN_6DB)
-mq3_adc.atten(machine.ADC.ATTN_6DB)
-print(machine.ADC.ATTN_6DB.to_bytes())
 # Binary file setup
 MAX_FILE_SIZE = 32 * 1024  # 32KB
 
-ENTRY_FORMAT = "<IIIIII"  # timestamp_ms, mq9_value, mq135_value, mq2_value, mq7_value, mq3_value
+ENTRY_FORMAT = "<I" + "I" * len(PINS)  # 1 unsigned int (timestamp) + 5 unsigned ints (sensor values)
 ENTRY_SIZE = struct.calcsize(ENTRY_FORMAT)
 server_running = True
 
 UDP_IP = "255.255.255.255"  # Broadcast address
 UDP_PORT = 4210
-DEBUG_LEVEL = 1  # 0 = Off, 1 = all udp logs, 2 = all udp logs and print to console
+DEBUG_LEVEL = 2  # 0 = Off, 1 = all udp logs, 2 = all udp logs and print to console
 
 N_FILES = 20  # Number of files to keep
 LIST_OF_FILES_NAMES = [f"data/file_{i}.bin" for i in range(20)]  # Extend for n files
@@ -176,6 +163,7 @@ def read_measurements(last_n=None):
 
     return measurements
 
+
 def check_for_anomaly(measurements_current):
     global CURRENT_MEASUREMENT_INDEX, MEASUREMENTS
 
@@ -270,10 +258,9 @@ async def handle_client(reader, writer):
 
 async def file_server():
     HOST = "0.0.0.0"
-    PORT = 12345
 
-    server = await asyncio.start_server(handle_client, HOST, PORT)
-    print(f"File server running on {HOST}:{PORT}")
+    server = await asyncio.start_server(handle_client, HOST, SERVER_PORT)
+    print(f"File server running on {HOST}:{SERVER_PORT}")
 
     while True:
         await asyncio.sleep(1)  # Keep the server running
@@ -289,36 +276,21 @@ async def measurement_loop():
             # Take measurements
             timestamp = time.time()
             udp_log(f"Taking measurement at: {timestamp}", DEBUG_LEVEL)
-            mq9_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
-            mq135_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
-            mq2_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
-            mq7_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
-            mq3_values = array('H', [0] * N_MEASUREMENTS_TO_AVERAGE)
-
+            list_of_measurements_arrays = [array('H', [0] * N_MEASUREMENTS_MEMORY) for _ in range(N_SENSORS)]
             led.value(1)
             for i in range(N_MEASUREMENTS_TO_AVERAGE):
-                # print(f"{str(time.ticks_ms()).ljust(30)}, {i}")
-                mq9_values[i] = mq9_adc.read()
-                mq135_values[i] = mq135_adc.read()
-                mq2_values[i] = mq2_adc.read()
-                mq7_values[i] = mq7_adc.read()
-                mq3_values[i] = mq3_adc.read()
+                for j in range(N_SENSORS):
+                    list_of_measurements_arrays[j][i] = adcs[j].read()
                 await asyncio.sleep(MEASUREMENT_TIME_INTERVAL / N_MEASUREMENTS_TO_AVERAGE)
             led.value(0)
 
             # Average the measurements
-            mq9 = sum(mq9_values) // N_MEASUREMENTS_TO_AVERAGE
-            mq135 = sum(mq135_values) // N_MEASUREMENTS_TO_AVERAGE
-            mq2 = sum(mq2_values) // N_MEASUREMENTS_TO_AVERAGE
-            mq7 = sum(mq7_values) // N_MEASUREMENTS_TO_AVERAGE
-            mq3 = sum(mq3_values) // N_MEASUREMENTS_TO_AVERAGE
-
+            list_of_averaged_measurements = [sum(measurements) // N_MEASUREMENTS_TO_AVERAGE for measurements in list_of_measurements_arrays]
             # Check for anomalies
-
-
+                # not yet implemented
             # Save in binary format
-            save_measurement(timestamp, [mq9, mq135, mq2, mq7, mq3])
-            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {[mq9, mq135, mq2, mq7, mq3]}",
+            save_measurement(timestamp, list_of_averaged_measurements)
+            udp_log(f"Measurement: {timestamp} ({format_timestamp(timestamp)}), {list_of_averaged_measurements}",
                     level=max(1, DEBUG_LEVEL))  # always log this one
             # Blink LED
             # udp_log("LED blinked", DEBUG_LEVEL)
@@ -349,4 +321,3 @@ async def main():
 
 
 asyncio.run(main())
-

@@ -1,13 +1,11 @@
 import serial
 import csv
+import time
 import struct
-from pathlib import Path
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import convolve
 from scipy.stats import norm
-import time
 
 
 # ====== 3. Timestamp Formatting ======
@@ -42,59 +40,72 @@ def from_serial_port_to_csv():
     ser.close()  # Close the serial connection
 
 
+# ====== Pandas Parser ======
 def read_from_local_bin(file_path):
-    """
-        Convert ESP32 binary sensor data to Pandas DataFrame
-
-        Args:
-            file_path (str): Path to data.bin file
-
-        Returns:
-            pd.DataFrame: DataFrame with columns [timestamp_ms, mq9_value, mq135_value]
-        """
-    # Binary format specification (must match ESP32 code)
-    entry_format = "<IIIIII"  # 3 unsigned integers (timestamp, mq9, mq135)
-    entry_size = struct.calcsize(entry_format)
-
     data = []
-    with open(file_path, 'rb') as f:
-        while True:
-            chunk = f.read(entry_size)
-            if not chunk:
-                break
-            try:
-                # Unpack binary data
-                timestamp, mq9, mq135, mq2, mq7, mq3 = struct.unpack(entry_format, chunk)
-                data.append({
-                    'timestamp_s': timestamp, # and  # mq9, mq135, mq2, mq7, mq3
-                    'mq9_value': mq9,
-                    'mq135_value': mq135,
-                    'mq2_value': mq2,
-                    'mq7_value': mq7,
-                    'mq3_value': mq3
+    try:
+        with open(file_path, 'rb') as f:
+            header_format = "<II"
+            header_size = struct.calcsize(header_format)
+            header_data = f.read(header_size)
+            DEVICE_ID, entry_format_length = struct.unpack(header_format, header_data)
 
-                })
-            except struct.error as e:
-                print(f"Error unpacking data: {e}")
-                continue
+            # Reconstruct entry_format based on number of uint32s
+            num_fields = entry_format_length - 2  # -2 for the timestamp and the constant <
+            entry_format = '<' + 'I' + 'I' * num_fields
+            entry_size = struct.calcsize(entry_format)
 
-    # Create DataFrame
+            while True:
+                chunk = f.read(entry_size)
+                if not chunk:
+                    break
+                try:
+                    values = struct.unpack(entry_format, chunk)
+                    record = {'timestamp_s': values[0]}
+                    for i, val in enumerate(values[1:], 1):
+                        record[f'value_{i}'] = val
+                    data.append(record)
+                except struct.error as e:
+                    print(f"Error unpacking data: {e}")
+                    continue
+
+    except Exception as e:
+        print(f"Error reading binary file: {e}")
+
     df = pd.DataFrame(data)
 
-    # Add human-readable datetime if needed
     if not df.empty:
-        df['timestamp_s'] += 3 * 3600  # delete this when the data is fixed
+        df['timestamp_s'] += 3 * 3600  # temporary timezone offset
         df['date_time'] = pd.to_datetime(df['timestamp_s'], unit='s', origin='2000-01-01')
 
-        # Define Gaussian kernel
         std_gaussian = 10
-        kernel_size = std_gaussian * 6  # Ensure the kernel captures enough of the Gaussian tail
+        kernel_size = std_gaussian * 6
         x = np.linspace(-kernel_size // 2, kernel_size // 2, kernel_size)
-        gaussian_kernel = norm.pdf(x, scale=std_gaussian)  # Gaussian of height 1
-        gaussian_kernel /= gaussian_kernel.sum()  # Normalize so it doesn't change total magnitude
+        gaussian_kernel = norm.pdf(x, scale=std_gaussian)
+        gaussian_kernel /= gaussian_kernel.sum()
 
-        for col in ['mq9_value', 'mq135_value', 'mq2_value', 'mq7_value', 'mq3_value']:
-            # Convolve the data with the Gaussian
-            df[f"{col}_convolved"] = convolve(df[col], gaussian_kernel, mode='same')
-        # df = df.iloc[:-kernel_size]
+        for col in df.columns:
+            if col.startswith('value_'):
+                df[f"{col}_convolved"] = convolve(df[col], gaussian_kernel, mode='same')
+
     return df
+
+
+def read_from_local_bin_multiple(file_paths):
+    if isinstance(file_paths, str):
+        # If a single file path is provided, process it as usual
+        return read_from_local_bin(file_paths)
+
+    if isinstance(file_paths, list):
+        all_dfs = []
+        for idx, file_path in enumerate(file_paths):
+            df = read_from_local_bin(file_path)
+            if not df.empty:
+                df['source_index'] = idx  # Add a column for the index of the DataFrame
+                all_dfs.append(df)
+
+        # Perform UNION ALL (concatenation) on all DataFrames
+        if all_dfs:
+            concatenated_df = pd.concat(all_dfs, ignore_index=True)
+            ordered_df = concatenated_df.sort_values(by='date_time', ascending=True)
+            return ordered_df

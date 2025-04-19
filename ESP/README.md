@@ -30,5 +30,9 @@ and will first have to quite the other connection.
 to upload a file to the ESP, run the following command:
 
 ```bat
+python -m ampy.cli --port COM8 --delay 1 put local_config.py
+python -m ampy.cli --port COM8 --delay 1 run create_data_dir.py
+python -m ampy.cli --port COM8 --delay 1 put wifi_credentials.py
 python -m ampy.cli --port COM8 --delay 1 put boot.py
 ```
+

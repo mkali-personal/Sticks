@@ -1,2 +1,0 @@
-PINS = [34, 35]
-SERVER_PORT = 12346

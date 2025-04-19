@@ -3,15 +3,13 @@ import re
 import os
 import datetime
 
-ESP32_IP = "10.100.102.45"  # Replace with your ESP32's IP
-ESP32_PORT = 12345
 
 def extract_index(file_name):
     match = re.search(r'file_(\d+)\.bin$', file_name)
     return int(match.group(1)) if match else -1
 
 
-def request_and_merge_files(file_names, output_file_name):
+def request_and_merge_files(file_names, output_file_name, esp32_ip='10.100.102.23', esp32_port=12345):
     try:
         # Sort file names in descending order based on the index
         file_names.sort(key=extract_index, reverse=True)
@@ -28,7 +26,7 @@ def request_and_merge_files(file_names, output_file_name):
             for file_name in file_names:
                 try:
                     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    client_socket.connect((ESP32_IP, ESP32_PORT))
+                    client_socket.connect((esp32_ip, esp32_port))
                     client_socket.sendall(file_name.encode())
 
                     response = client_socket.recv(2).decode()
@@ -55,6 +53,3 @@ if __name__ == "__main__":
     # Example file names to request
     file_list = [f"file_{i}.bin" for i in range(5)]  # Adjust the range as needed
     request_and_merge_files(file_list, "merged_output")
-
-
-

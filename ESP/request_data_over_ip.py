@@ -9,7 +9,7 @@ def extract_index(file_name):
     return int(match.group(1)) if match else -1
 
 
-def request_and_merge_files(file_names, output_file_name, esp32_ip='10.100.102.23', esp32_port=12345):
+def request_and_merge_files(file_names, output_file_name, esp32_ip, esp32_port):
     try:
         # Sort file names in descending order based on the index
         file_names.sort(key=extract_index, reverse=True)

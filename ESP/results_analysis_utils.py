@@ -41,6 +41,10 @@ def from_serial_port_to_csv():
 
 
 # ====== Pandas Parser ======
+import struct
+import datetime
+
+# ====== Pandas Parser ======
 def read_from_local_bin(file_path):
     data = []
     try:
@@ -55,16 +59,34 @@ def read_from_local_bin(file_path):
             entry_format = '<' + 'I' + 'I' * num_fields
             entry_size = struct.calcsize(entry_format)
 
+            def is_valid_timestamp(ts):
+                try:
+                    origin = datetime.datetime(2000, 1, 1)
+                    dt = origin + datetime.timedelta(seconds=ts)
+                    return 2025 <= dt.year <= 2040
+                except (OSError, OverflowError, ValueError):
+                    return False
+
             while True:
+                current_pos = f.tell()
                 chunk = f.read(entry_size)
-                if not chunk:
+                if len(chunk) < entry_size:
                     break
+
                 try:
                     values = struct.unpack(entry_format, chunk)
-                    record = {'timestamp_s': values[0]}
+                    timestamp = values[0]
+
+                    if not is_valid_timestamp(timestamp):
+                        # Misaligned: skip 4 bytes and retry
+                        f.seek(current_pos + 4)
+                        continue
+
+                    record = {'timestamp_s': timestamp}
                     for i, val in enumerate(values[1:], 1):
                         record[f'value_{i}'] = val
                     data.append(record)
+
                 except struct.error as e:
                     print(f"Error unpacking data: {e}")
                     continue
@@ -109,3 +131,28 @@ def read_from_local_bin_multiple(file_paths):
             concatenated_df = pd.concat(all_dfs, ignore_index=True)
             ordered_df = concatenated_df.sort_values(by='date_time', ascending=True)
             return ordered_df
+
+import os
+import matplotlib.pyplot as plt
+
+def save_fig_safe(filepath, **kwargs):
+    """
+    Saves a matplotlib figure to `filepath`. If the file already exists,
+    saves to `filepath` with a numeric suffix before the extension, like _1, _2, etc.
+
+    Example:
+        save_fig_safe("output/plot.png")
+        → saves to "output/plot.png" or "output/plot_1.png" if already exists
+
+    kwargs are passed to plt.savefig (e.g., dpi=300, bbox_inches='tight')
+    """
+    base, ext = os.path.splitext(filepath)
+    candidate = filepath
+    i = 1
+
+    while os.path.exists(candidate):
+        candidate = f"{base}_{i}{ext}"
+        i += 1
+
+    plt.savefig(candidate, **kwargs)
+    print(f"✔ Saved figure to: {candidate}")

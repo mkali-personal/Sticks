@@ -28,7 +28,7 @@ led = machine.Pin(LED_PIN, machine.Pin.OUT)
 adcs = [machine.ADC(machine.Pin(pin)) for pin in PINS]
 
 for adc in adcs:
-    adc.atten(machine.ADC.ATTN_0DB)  # Set ADC attenuation to 11dB for better range
+    adc.atten(machine.ADC.ATTN_11DB)  # Set ADC attenuation to 11dB for better range
 # Set ADC attenuation
 # Binary file setup
 MAX_FILE_SIZE = 32 * 1024  # 32KB
